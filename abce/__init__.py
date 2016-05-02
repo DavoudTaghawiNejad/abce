@@ -141,6 +141,7 @@ class Simulation:
             simulation = Simulation(**parameters, cores=None)
         """
         self.family_list = {}
+        self.agents_list = {}
         self._messages = {}
         self._action_list = []
         self._resource_command_group = {}
@@ -250,7 +251,7 @@ class Simulation:
 
         """
         if len(self.family_list) > 0:
-            raise SystemExit("WARNING: declare_round_endowment(...) must be called before the agents are build")
+            raise Exception("WARNING: declare_round_endowment(...) must be called before the agents are build")
         for group in groups:
             self.resource_endowment[group].append((resource, units, product))
 
@@ -449,6 +450,7 @@ class Simulation:
         for group in groups:
             for family in self.family_list[group]:
                 messages[family.name()] = []
+        messages[('_simulation', 0)] = []
         for block in families_messages:
             for family_name, family_msgs in block.iteritems():
                 if len(family_msgs):
@@ -523,6 +525,9 @@ class Simulation:
 
                 for processor, group, action in self._action_list:
                     messagess = processor(group, action, messagess)
+                    if ('_simulation', 0) in messagess:
+                        self.add_agents(messagess[('_simulation', 0)])
+                        del messagess[('_simulation', 0)]
                 self.execute_internal('_advance_round')
                 self.execute_internal('_perish')
         except EOFError:
@@ -533,8 +538,9 @@ class Simulation:
             print(str("time only simulation %6.2f" % (time.time() - start_time)))
             self.gracefull_exit()
             print(str("time with data and network %6.2f" % (time.time() - start_time)))
-            postprocess.to_csv(os.path.abspath(self.path))
-            print(str("time with post processing %6.2f" % (time.time() - start_time)))
+            if self.round > 0:
+                postprocess.to_csv(os.path.abspath(self.path))
+                print(str("time with post processing %6.2f" % (time.time() - start_time)))
             self.messagess = messagess
 
 
@@ -557,7 +563,7 @@ class Simulation:
         except AttributeError:
             pass
 
-    def build_agents(self, AgentClass, group_name, number=None, parameters={}, agent_parameters=None):
+    def build_agents(self, AgentClass, group_name, number=None, parameters={}, agent_parameters=None, expandable=False):
         """ This method creates agents.
 
         Args:
@@ -583,6 +589,9 @@ class Simulation:
                 a list of dictionaries, where each agent gets one dictionary.
                 The number of agents is the length of the list
 
+            expandable:
+                if you want to add agents during the simulation, expandable must be set to true
+
         Example::
 
          w.build_agents(Firm, number=simulation_parameters['num_firms'])
@@ -603,8 +612,11 @@ class Simulation:
         self.sim_parameters[group_name] = {key: parameter
                                            for key, parameter in parameters.iteritems()
                                            if key not in self.sim_parameters.keys() + ['trade_logging']}
-
-        for i in range(min(self.cores, num_agents_this_group)):
+        if expandable:
+            num_families = self.cores
+        else:
+            num_families = min(self.cores, num_agents_this_group)
+        for i in range(num_families):
             manager = MyManager()
             manager.start()
             family = manager.Family(AgentClass, num_agents_this_group=num_agents_this_group, batch=i, num_managers=self.cores,
@@ -639,6 +651,46 @@ class Simulation:
                 family.set_network_drawing_frequency(None)
 
             self.family_list[group_name].append(family)
+            self.agents_list[group_name] = num_agents_this_group
+
+    def add_agents(self, messages):
+        for _, _, (AgentClass, group_name, parameters, agent_parameters) in messages:
+            id = self.agents_list[group_name]
+            self.agents_list[group_name] += 1
+            try:
+                family = self.family_list[group_name][id % self.cores]
+            except IndexError:
+                IndexError("the expandable parameter in build_agents must be set to true")
+
+            family.append(AgentClass, id=id,
+                                    agent_args={'group': group_name,
+                                                'trade_logging': self.trade_logging_mode,
+                                                'database': self.database_queue,
+                                                'logger':self.logger_queue,
+                                                'random_seed': random.random(),
+                                                'round': self.round})
+            # for good, duration in self.expiring:
+            #     family.agents[id]._declare_expiring(good, duration)
+
+            family.last_added_agent('init', (parameters, agent_parameters))
+
+            # for good in self.perishable:
+            #     family.agents[id]._register_perish(good)
+
+            # for resource, units, product in self.resource_endowment[group_name] + self.resource_endowment['all']:
+            #     family.agents[id]._register_resource(resource, units, product)
+
+            family.last_added_agent('_register_panel', (self.possessins_to_track_panel[group_name],
+                                                       self.variables_to_track_panel[group_name]))
+
+            family.last_added_agent('_register_aggregate', (self.possessions_to_track_aggregate[group_name],
+                                                       self.variables_to_track_aggregate[group_name]))
+
+            # try:
+            #     family.agents[id].set_network_drawing_frequency(self._network_drawing_frequency)
+            # except AttributeError:
+            #     family.agents[id].set_network_drawing_frequency(None)
+
 
     def _write_description_file(self):
         description = open(os.path.abspath(self.path + '/description.txt'), 'w')
