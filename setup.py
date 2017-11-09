@@ -15,21 +15,6 @@ from distutils.errors import CCompilerError, DistutilsExecError, \
 import platform
 
 
-class TXEntension(build_ext):
-    # This class allows C extension building to fail.
-    def run(self):
-        try:
-            build_ext.run(self)
-        except DistutilsPlatformError:
-            raise Exception("BuildFailed")
-
-    def build_extension(self, ext):
-        try:
-            build_ext.build_extension(self, ext)
-        except (CCompilerError, DistutilsExecError, DistutilsPlatformError):
-            pass  # raise BuildFailed()
-
-
 cmdclass = {}
 ext_modules = []
 
@@ -42,18 +27,6 @@ install_requires = ['networkx >= 1.9.1',
 readthedocs = os.environ.get('READTHEDOCS') == 'True'
 
 if not readthedocs:
-    try:
-        ext_modules += [
-            Extension("abce.trade", ["abce/trade.pyx"]),
-            Extension("abce.online_variance", ["abce/online_variance.pyx"]),
-        ]
-        cmdclass.update({'build_ext': TXEntension})
-    except ImportError:
-        ext_modules += [
-            Extension("abce.trade", ["abce/trade.c"]),
-            Extension("abce.online_variance", ["abce/online_variance.c"]),
-        ]
-
     if not platform.python_implementation() == "PyPy":
         install_requires += ['numpy >= 1.10.2p',
                              'pandas >= 0.17.1',

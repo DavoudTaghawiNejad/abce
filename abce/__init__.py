@@ -65,7 +65,6 @@ from .agents import (FirmMultiTechnologies, Firm,  # noqa: F401
                      LoudDeadAgent)  # noqa: F401
 from .quote import Quote  # noqa: F401
 from .contracts import Contracting  # noqa: F401
-from .processorgroup import ProcessorGroup
 from .gui import gui, graphs  # noqa: F401
 
 
@@ -199,29 +198,10 @@ class Simulation(object):
 
         self.processes = mp.cpu_count() * 2 if processes is None else processes
 
-        if processes == 1:
-            self.database_queue = queue.Queue()
-            self._processor_groups = [ProcessorGroup(1, batch=0)]
-            self.execute_advance_round = self._execute_advance_round_seriel
-        else:
+        self.database_queue = queue.Queue()
+        self.execute_advance_round = self._execute_advance_round_seriel
 
-            manager = mp.Manager()
-            self.database_queue = manager.Queue()
-            self.pool = mp.Pool(self.processes)
-
-            MyManager.register('ProcessorGroup', ProcessorGroup)
-            self.managers = []
-            self._processor_groups = []
-            for i in range(self.processes):
-                manager = MyManager()
-                manager.start()
-                self.managers.append(manager)
-                pg = manager.ProcessorGroup(self.processes, batch=i)
-                self._processor_groups.append(pg)
-
-            self.execute_advance_round = self._execute_advance_round_parallel
-
-        self.messagess = [list() for _ in range(self.processes + 1)]
+        self.messagess = {}
 
         self._db = Database(
             self.path,
@@ -239,6 +219,7 @@ class Simulation(object):
         self.database = self
         self.time = None
         """Returns the current time set with simulation.advance_round(time)"""
+        self._groups = {}
 
     def declare_round_endowment(self, resource, units,
                                 product):
@@ -353,12 +334,8 @@ class Simulation(object):
 
     def _execute_advance_round_seriel(self, time):
 
-        for pg in self._processor_groups:
-            pg.execute_advance_round(time)
-
-    def _execute_advance_round_parallel(self, time):
-        parameters = ((pg, time) for pg in self._processor_groups)
-        self.pool.map(execute_advance_round_wrapper, parameters, chunksize=1)
+        for group in self._groups.values():
+            group.execute_advance_round(time)
 
     def advance_round(self, time):
         if not self._db_started:
@@ -461,8 +438,9 @@ class Simulation(object):
             'perishable': self.perishable,
             'resource_endowment': self.resource_endowment}
 
-        for pg in self._processor_groups:
-            pg.add_group(AgentClass,
+        group = Group(self, [group_name], AgentClass)
+
+        group.add_group(AgentClass,
                          num_agents_this_group=num_agents_this_group,
                          agent_args={'group': group_name,
                                      'trade_logging': self.trade_logging_mode,
@@ -475,8 +453,11 @@ class Simulation(object):
                          agent_parameters=agent_parameters,
                          agent_params_from_sim=agent_params_from_sim)
 
-            self.num_of_agents_in_group[group_name] = num_agents_this_group
-        return Group(self, [group_name], AgentClass)
+        self.num_of_agents_in_group[group_name] = num_agents_this_group
+        self._groups[group_name] = group
+        self.messagess[group_name] = []
+        return group
+
 
     def create_agent(self, AgentClass, group_name, parameters=None, agent_parameters=None):
         """ Creates an additional agent in an existing group during the simulation.
@@ -504,10 +485,7 @@ class Simulation(object):
                               parameters=self.parameters,
                               agent_parameters={'creation': self.time})
         """
-        id = self.num_of_agents_in_group[group_name]
-        self.num_of_agents_in_group[group_name] += 1
-        pg = self._processor_groups[id % self.processes]
-        pg.append(AgentClass, id=id,
+        self._groups[group_name].append(AgentClass, id=self.num_of_agents_in_group[group_name],
                   agent_args={'group': group_name,
                               'trade_logging': self.trade_logging_mode,
                               'database': self.database_queue,
@@ -518,6 +496,7 @@ class Simulation(object):
                               'start_round': self.time},
                   parameters=parameters,
                   agent_parameters=agent_parameters)
+        self.num_of_agents_in_group[group_name] += 1
 
     def delete_agent(self, name, quite=True):
         """ This deletes an agent. By default, quite is set to True, all future
@@ -532,13 +511,12 @@ class Simulation(object):
             quite:
                 whether the dead agent ignores incoming messages.
         """
-        group, id = name
+        group_name, id = name
 
-        pg = self._processor_groups[id % self.processes]
         if quite:
-            pg.replace_with_dead(group, id, SilentDeadAgent)
+            self._groups[group_name].replace_with_dead(group, id, SilentDeadAgent)
         else:
-            pg.replace_with_dead(group, id, LoudDeadAgent)
+            self._groups[group_name].replace_with_dead(group, id, LoudDeadAgent)
 
     def _write_description_file(self):
         description = open(os.path.abspath(

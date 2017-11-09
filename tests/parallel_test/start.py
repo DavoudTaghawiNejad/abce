@@ -7,7 +7,7 @@ def main():
     s = Simulation()
 
     a = s.build_agents(MyAgent, 'myagent', 10000)
-    for r in range(50):
+    for r in range(10):
         s.advance_round(r)
         a.do("compute")
     s.finalize()

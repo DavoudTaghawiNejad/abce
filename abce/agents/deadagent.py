@@ -12,7 +12,7 @@ class SilentDeadAgent(object):
         return nothing
 
     def _execute(self, command, args, kwargs):
-        return []
+        return {}, None
 
 
 class LoudDeadAgent(object):
@@ -28,4 +28,4 @@ class LoudDeadAgent(object):
         if self.inbox:
             print(self.inbox)
             raise Exception("Message to dead agent")
-        return []
+        return {}, None

@@ -1,3 +1,10 @@
+import traceback
+from numba import jit, prange
+
+
+NUMBA_WARNINGS = 1
+
+
 def get_methods(a_class):
     return [method for method in a_class.__dict__.keys() if
             callable(getattr(a_class, method)) and not
@@ -5,55 +12,30 @@ def get_methods(a_class):
 
 
 class Group(object):
-    def __init__(self, sim, groups, agent_class=None):
+    def __init__(self, sim, group_name, agent_class=None):
         self.sim = sim
         self.num_managers = sim.processes
-        self._processor_groups = sim._processor_groups
-        self.groups = groups
-        self.do = (self.execute_parallel
-                   if sim.processes > 1
-                   else self.execute_serial)
+        self.group_name = group_name[0]
 
         self.agent_class = agent_class
-        for method in dir(agent_class):
-            if method[0] != '_':
-                setattr(self, method,
-                        eval('lambda self=self, *argc, **kw: self.do("%s", *argc, **kw)' %
-                             method))
+        # for method in dir(agent_class):
+        #     if method[0] != '_':
+        #         setattr(self, method,
+        #                 eval('lambda self=self, *argc, **kw: self.do("%s", *argc, **kw)' %
+        #                      method))
 
         self.panel_serial = 0
         self.last_action = "Begin_of_Simulation"
 
+
+        self.agents = []
+        self.mymessages = list()
+
     def __add__(self, g):
-        return Group(self.sim, self.groups + g.groups, self.agent_class)
+        raise NotImplemented
 
     def __radd__(self, g):
-        if isinstance(g, Group):
-            return self.__add__(g)
-        else:
-            return self
-
-    def execute_serial(self, command, *args, **kwargs):
-        self.last_action = command
-        self.sim.messagess[-1].clear()
-        out_messages = self._processor_groups[0].execute(
-            self.groups, command, [], args, kwargs)
-        self.sim.messagess = out_messages
-        return out_messages[-1]
-
-    def execute_parallel(self, command, *args, **kwargs):
-        self.last_action = command
-        self.sim.messagess[-1].clear()
-        parameters = ((pg, self.groups, command, self.sim.messagess[pgid], args, kwargs)
-                      for pgid, pg in enumerate(
-            self._processor_groups))
-        out = self.sim.pool.map(execute_wrapper, parameters, chunksize=1)
-        for pgid in range(self.num_managers):
-            self.sim.messagess[pgid].clear()
-        for out_messages in out:
-            for pgid, messages in enumerate(out_messages):
-                self.sim.messagess[pgid].extend(messages)
-        return self.sim.messagess[-1]
+        raise NotImplemented
 
     def panel_log(self, variables=[], possessions=[], func={}, len=[]):
         """ panel_log(.) writes a panel of variables and possessions
@@ -79,7 +61,7 @@ class Group(object):
                             variables=['production_target', 'gross_revenue'])
                 households.buying()
         """
-        self.do('_panel_log', variables, possessions, func, len, self.last_action)
+        self.do('_panel_log', [variables, possessions, func, len, self.last_action])
 
     def agg_log(self, variables=[], possessions=[], func={}, len=[]):
         """ agg_log(.) writes a aggregate data of variables and possessions
@@ -105,9 +87,86 @@ class Group(object):
                             variables=['production_target', 'gross_revenue'])
                 households.buying()
         """
-        self.do('_agg_log', variables, possessions, func, len)
+        self.do('_agg_log', [variables, possessions, func, len])
 
+    def add_group(self, Agent, num_agents_this_group, agent_args, parameters,
+                  agent_parameters, agent_params_from_sim):
+        self.apfs = agent_params_from_sim
+        for i in range(num_agents_this_group):
+            agent = self.make_an_agent(Agent, id=i, agent_args=agent_args,
+                                       parameters=parameters,
+                                       agent_parameters=agent_parameters[i])
+            self.agents.append(agent)
 
-def execute_wrapper(inp):
-    # processor_group.execute(self.groups, command, messages[pgid])
-    return inp[0].execute(inp[1], inp[2], inp[3], inp[4], inp[5])
+    def append(self, Agent, id, agent_args, parameters, agent_parameters):
+        group = agent_args['group']
+        agent = self.make_an_agent(
+            Agent, id, agent_args, parameters, agent_parameters)
+        self.agents.append(agent)
+
+    def make_an_agent(self, Agent, id, agent_args,
+                      parameters, agent_parameters):
+        agent_args['num_managers'] = self.num_managers
+        agent = Agent(id=id, **agent_args)
+        for good, duration in self.apfs['expiring']:
+            agent._declare_expiring(good, duration)
+        for good in self.apfs['perishable']:
+            agent._register_perish(good)
+        for resource, units, product in self.apfs['resource_endowment']:
+            agent._register_resource(resource, units, product)
+        try:
+            agent.init(parameters, agent_parameters)
+        except AttributeError:
+            if 'init' not in dir(agent):
+                print("Warning: agent %s has no init function" % agent.group)
+            else:
+                raise
+        except KeyboardInterrupt:
+            return None
+        except Exception:
+            sleep(random.random())
+            traceback.print_exc()
+            raise Exception()
+        return agent
+
+    @jit
+    def do(self, command):
+        outreturns = []
+        self.last_action = command
+        self.put_messages_in_pigeonbox(self.sim.messagess[self.group_name])
+        self.sim.messagess[self.group_name].clear()
+        for i in prange(len(self.agents)):
+            self.agents[i]._execute(command)
+        for agent in self.agents:
+            outmsgs = agent._out
+            outret = agent._ret
+            for rec_group, msgs in outmsgs.items():
+                self.sim.messagess[rec_group].extend(msgs)
+            outreturns.append(outret)
+        return outreturns
+
+    def replace_with_dead(self, group, id, DeadAgent):
+        """ replaces a deleted agent """
+        self.agents[id] = DeadAgent()
+
+    def execute_advance_round(self, time):
+        for agent in self.agents:
+            try:
+                agent._advance_round(time)
+            except KeyboardInterrupt:
+                return None
+            except Exception:
+                sleep(random.random())
+                traceback.print_exc()
+                raise Exception()
+
+    def put_messages_in_pigeonbox(self, new_messages):
+        for group, id, message in new_messages:
+            assert group == self.group_name
+            self.agents[id].inbox.append(message)
+
+    def len(self):
+        return sum([len(group) for group in self.agents.values()])
+
+    def __repr__(self):
+        return repr()

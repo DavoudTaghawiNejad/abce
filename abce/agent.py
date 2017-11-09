@@ -37,6 +37,7 @@ from .database import Database
 from .trade import Trade
 from .messaging import Messaging
 from .inventory import Inventory
+from numba import jit
 
 
 class DummyContracts:
@@ -312,31 +313,24 @@ class Agent(Database, Trade, Messaging):
         """
         self._inventory.destroy(good, quantity)
 
-    def _execute(self, command, args, kwargs):
-        self._out = [[] for _ in range(self.num_managers + 1)]
-        try:
-            self._clearing__end_of_subround(self.inbox)
-            self._begin_subround()
-            self._out[-1] = getattr(self, command)(*args, **kwargs)
-            self._end_subround()
-            self._reject_polled_but_not_accepted_offers()
-        except KeyboardInterrupt:
-            return None
-        except Exception:
-            time.sleep(random.random())
-            print('command', command)
-            print('args', args)
-            print('kwargs', kwargs)
-            raise
+    @jit(nogil=True)
+    def _execute(self, command):
+        self._out = defaultdict(list)
+        self._clearing__end_of_subround(self.inbox)
+        self._begin_subround()
+        self._ret = getattr(self, command)()
+        self._end_subround()
+        self._reject_polled_but_not_accepted_offers()
 
         self.inbox.clear()
-        return self._out
 
+    @jit
     def _begin_subround(self):
         """ Overwrite this to make ABCE plugins, that need to do
         something at the beginning of every subround """
         pass
 
+    @jit
     def _end_subround(self):
         """ Overwrite this to make ABCE plugins, that need to do
         something at the beginning of every subround """
@@ -348,6 +342,7 @@ class Agent(Database, Trade, Messaging):
     def _register_perish(self, good):
         self._inventory._perishable.append(good)
 
+    @jit
     def _send(self, receiver_group, receiver_id, typ, msg):
         """ sends a message to 'receiver_group', who can be an agent, a group or
         'all'. The agents receives it at the begin of each round in
@@ -355,7 +350,7 @@ class Agent(Database, Trade, Messaging):
         typ =(_o,c,u,r) are
         reserved for internally processed offers.
         """
-        self._out[receiver_id % self.num_managers].append(
+        self._out[receiver_group].append(
             (receiver_group, receiver_id, (typ, msg)))
 
     def __getitem__(self, good):

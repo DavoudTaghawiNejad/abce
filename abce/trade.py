@@ -40,7 +40,7 @@ Messaging between agents:
 # ***************************************************************************************** #
 import random
 from abce.notenoughgoods import NotEnoughGoods
-
+from numba import jit
 epsilon = 0.00000000001
 
 
@@ -365,6 +365,7 @@ class Trade:
             ret.sort(key=lambda objects: objects.price, reverse=descending)
         return ret
 
+    @jit
     def sell(self, receiver,
              good, quantity, price, currency='money', epsilon=epsilon):
         """ Sends a offer to sell a particular good to somebody. The amount promised
@@ -556,11 +557,13 @@ class Trade:
         else:
             return {offer.good: quantity, offer.currency: - money_amount}
 
+    @jit
     def _reject_polled_but_not_accepted_offers(self):
         for offer in self._polled_offers.values():
             self._reject(offer)
         self._polled_offers = {}
 
+    @jit
     def _reject(self, offer):
         """  Rejects the offer offer
 
@@ -700,6 +703,7 @@ class Trade:
         """
         self.buy(receiver[0], receiver[1], good=good, quantity=quantity, price=0, epsilon=epsilon)
 
+    @jit
     def _clearing__end_of_subround(self, incomming_messages):
         """ agent receives all messages and objects that have been send in this
         subround and deletes the offers that where retracted, but not executed.
