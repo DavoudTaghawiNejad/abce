@@ -43,8 +43,8 @@ class Message(object):
 class Messaging:
     def __init__(self, id, agent_parameters, simulation_parameters, group, trade_logging,
                  database, check_unchecked_msgs, expiring, perishable, resource_endowment, start_round=None):
-        super(Messaging, self).__init__(id, agent_parameters, simulation_parameters, group, trade_logging, database,
-                                        check_unchecked_msgs, expiring, perishable, resource_endowment, start_round)
+        super().__init__(id, agent_parameters, simulation_parameters, group, trade_logging, database,
+                         check_unchecked_msgs, expiring, perishable, resource_endowment, start_round)
 
     def send(self, receiver, topic, content):
         """ sends a message to agent. Agents receive it

@@ -89,9 +89,9 @@ class Agent(Database, Trade, Messaging, Goods):
         """ Do not overwrite __init__ instead use a method called init instead.
         init is called whenever the agent are build.
         """
-        super(Agent, self).__init__(id, agent_parameters, simulation_parameters, group, trade_logging,
-                                    database, check_unchecked_msgs, expiring, perishable, resource_endowment,
-                                    start_round)
+        super().__init__(id, agent_parameters, simulation_parameters, group, trade_logging,
+                         database, check_unchecked_msgs, expiring, perishable, resource_endowment,
+                         start_round)
         """ self.id returns the agents id READ ONLY"""
         self.name = (group, id)
         self._name = (group, id)
