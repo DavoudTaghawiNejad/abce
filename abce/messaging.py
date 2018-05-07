@@ -196,5 +196,7 @@ class Messaging:
                     del self._contracts_pay[msg[1]][msg[2]]
                 if msg[0] == 'd':
                     del self._contracts_deliver[msg[1]][msg[2]]
+            elif typ[0] == '_':
+                getattr(self, typ)(msg)
             else:
                 self._msgs.setdefault(typ, []).append(msg)
