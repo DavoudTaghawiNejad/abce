@@ -57,7 +57,8 @@ if not readthedocs:
     if not platform.python_implementation() == "PyPy":
         install_requires += ['numpy >= 1.10.2p',
                              'pandas >= 0.17.1',
-                             'bokeh == 0.12.7']
+                             'bokeh == 0.12.7',
+                             'tornado == 4.3']
 
 
 version = '0.9.4i0'
