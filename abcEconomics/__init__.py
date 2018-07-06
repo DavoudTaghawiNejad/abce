@@ -52,7 +52,7 @@ import random
 import queue
 import multiprocessing as mp
 from collections import OrderedDict
-from .logger import ThreadingDatabase, MultiprocessingDatabase
+from .logger import  MultiprocessingDatabase
 from .agent import Agent  # noqa: F401
 from .group import Group
 from .notenoughgoods import NotEnoughGoods  # noqa: F401
@@ -165,26 +165,22 @@ class Simulation(object):
         else:
             self.scheduler = MultiProcess(processes)
 
-        if processes == 1 and not multiprocessing_database:
-            self.database_queue = queue.Queue()
-        else:
+        if processes >= 1 or multiprocessing_database:
             manager = mp.Manager()
             self.database_queue = manager.Queue()
 
-        if multiprocessing_database:
-            Database = MultiprocessingDatabase
+            self._db = MultiprocessingDatabase(
+                path,
+                name,
+                self.database_queue,
+                trade_log=self.trade_logging_mode != 'off',
+                plugin=dbplugin,
+                pluginargs=dbpluginargs)
+            self._db.start()
         else:
-            Database = ThreadingDatabase
+            self._db = self.database_queue = Database()
 
-        self._db = Database(
-            path,
-            name,
-            self.database_queue,
-            trade_log=self.trade_logging_mode != 'off',
-            plugin=dbplugin,
-            pluginargs=dbpluginargs)
         self.path = self._db.directory
-        self._db.start()
 
         if random_seed is None or random_seed == 0:
             random_seed = time.time()

@@ -67,6 +67,16 @@ class DbDatabase:
         self.plugin = plugin
         self.pluginargs = pluginargs
 
+
+        self.table_log = {}
+        self.current_log = defaultdict(list)
+        self.current_trade = []
+        self.table_aggregates = {}
+
+        if self.trade_log:
+            trade_table = self.dataset_db.create_table('trade___trade',
+                                                       primary_id='index')
+
     def run(self):
         if self.plugin is not None:
             self.plugin = self.plugin(*self.pluginargs)
@@ -76,9 +86,9 @@ class DbDatabase:
         self.dataset_db.query('PRAGMA count_changes=OFF')
         self.dataset_db.query('PRAGMA temp_store=OFF')
         self.dataset_db.query('PRAGMA default_temp_store=OFF')
-        table_log = {}
-        current_log = defaultdict(list)
-        current_trade = []
+        self.table_log = {}
+        self.current_log = defaultdict(list)
+        self.current_trade = []
         self.table_aggregates = {}
 
         if self.trade_log:
@@ -91,61 +101,68 @@ class DbDatabase:
             except queue.Empty:
                 print("simulation.finalize() must be specified at the end of simulation")
                 msg = self.in_sok.get()
-
-            if msg[0] == 'snapshot_agg':
-                _, round, group, data_to_write = msg
-                if self.round == round:
-                    for key, value in data_to_write.items():
-                        self.aggregation[group][key].update(value)
-                else:
-                    self.make_aggregation_and_write()
-                    self.round = round
-                    for key, value in data_to_write.items():
-                        self.aggregation[group][key].update(value)
-
-            elif msg[0] == 'trade_log':
-                for (good, seller, buyer, price), quantity in msg[1].items():
-                    current_trade.append({'round': msg[2],
-                                          'good': good,
-                                          'seller': seller,
-                                          'buyer': buyer,
-                                          'price': price,
-                                          'quantity': quantity})
-                    if len(current_trade) == 1000:
-                        trade_table.insert_many(current_trade)
-                        current_trade = []
-
-            elif msg[0] == 'log':
-                _, group, name, round, data_to_write, subround_or_serial = msg
-                table_name = 'panel___%s___%s' % (group, subround_or_serial)
-                data_to_write['round'] = str(round)
-                data_to_write['name'] = str(name)
-                current_log[table_name].append(data_to_write)
-                if len(current_log[table_name]) == 1000:
-                    if table_name not in table_log:
-                        table_log[table_name] = self.dataset_db.create_table(
-                            table_name, primary_id='index')
-                    table_log[table_name].insert_many(current_log[table_name])
-                    current_log[table_name] = []
-
-            elif msg == "close":
+            if msg == "close":
+                self.close()
                 break
+            self.put(msg)
 
+    def put(self, msg):
+        if msg[0] == 'snapshot_agg':
+            _, round, group, data_to_write = msg
+            if self.round == round:
+                for key, value in data_to_write.items():
+                    self.aggregation[group][key].update(value)
             else:
-                try:
-                    getattr(self.plugin, msg[0])(*msg[1], **msg[2])
-                except AttributeError:
-                    raise AttributeError(
-                        "abcEconomics_db error '%s' command unknown" % msg)
+                self.make_aggregation_and_write()
+                self.round = round
+                for key, value in data_to_write.items():
+                    self.aggregation[group][key].update(value)
 
-        for name, data in current_log.items():
+        elif msg[0] == 'trade_log':
+            for (good, seller, buyer, price), quantity in msg[1].items():
+                self.current_trade.append({'round': msg[2],
+                                      'good': good,
+                                      'seller': seller,
+                                      'buyer': buyer,
+                                      'price': price,
+                                      'quantity': quantity})
+                if len(self.current_trade) == 1000:
+                    trade_table.insert_many(self.current_trade)
+                    self.current_trade = []
+
+        elif msg[0] == 'log':
+            _, group, name, round, data_to_write, subround_or_serial = msg
+            table_name = 'panel___%s___%s' % (group, subround_or_serial)
+            data_to_write['round'] = str(round)
+            data_to_write['name'] = str(name)
+            self.current_log[table_name].append(data_to_write)
+            if len(self.current_log[table_name]) == 1000:
+                if table_name not in self.table_log:
+                    self.table_log[table_name] = self.dataset_db.create_table(
+                        table_name, primary_id='index')
+                self.table_log[table_name].insert_many(self.current_log[table_name])
+                self.current_log[table_name] = []
+
+        else:
+            try:
+                getattr(self.plugin, msg[0])(*msg[1], **msg[2])
+            except AttributeError:
+                raise AttributeError(
+                    "abcEconomics_db error '%s' command unknown" % msg)
+
+    def finalize(self, data):
+        self.close()
+        self._write_description_file(data)
+
+    def close(self):
+        for name, data in self.current_log.items():
             if name not in self.dataset_db:
-                table_log[name] = self.dataset_db.create_table(
+                self.table_log[name] = self.dataset_db.create_table(
                     name, primary_id='index')
-            table_log[name].insert_many(data)
+            self.table_log[name].insert_many(data)
         self.make_aggregation_and_write()
         if self.trade_log:
-            trade_table.insert_many(current_trade)
+            trade_table.insert_many(self.current_trade)
         self.dataset_db.commit()
         try:
             self.plugin.close()
@@ -169,11 +186,7 @@ class DbDatabase:
                 self.table_aggregates[group].insert(result)
             self.aggregation[group].clear()
 
-    def finalize(self, data):
-        self.in_sok.put('close')
-        while self.is_alive():
-            time.sleep(0.05)
-        self._write_description_file(data)
+
 
     def _write_description_file(self, data):
         if self.directory is not None:
@@ -185,11 +198,12 @@ class DbDatabase:
                     default=lambda x: 'not_serializeable'))
 
 
-class ThreadingDatabase(DbDatabase, threading.Thread):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-
 class MultiprocessingDatabase(DbDatabase, multiprocessing.Process):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+    def finalize(self, data):
+        self.in_sok.put('close')
+        while self.is_alive():
+            time.sleep(0.05)
+        self._write_description_file(data)
