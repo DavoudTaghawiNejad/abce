@@ -9,7 +9,8 @@ class LoggerTest(abcEconomics.Agent):
         self.create('cookies', 3)
 
     def one(self):
-        self.log('possessions', self.possessions())
+        for good, quantity in self.possessions().items():
+            self.log(good, quantity)
         self.log('round_log', self.time)
         pass
 

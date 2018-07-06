@@ -91,30 +91,15 @@ class Logger:
 
             self.log(self.produce_use_everything())
 
-        See also:
-            :meth:`~abecagent.Database.log_nested`:
-                handles nested dictianaries
-
-            :meth:`~abecagent.Database.log_change`:
-                loges the change from last round
-
-            :meth:`~abecagent.Database.observe_begin`:
-
         """
         if self.log_this_round:
-            try:
-                data_to_write = {re.sub('[^0-9a-zA-Z_]', '', '%s_%s' % (str(action_name), str(
-                    key))): data_to_log[key] for key in data_to_log}
-            except TypeError:
-                data_to_write = {str(action_name): data_to_log}
-
             self.database_connection.put(
-                ["log",
+                ("log",
+                 self._str_round,
                  self.group,
                  self._str_name,
-                 self._str_round,
-                 data_to_write,
-                 action_name])
+                 re.sub('[^0-9a-zA-Z_]', '', action_name),
+                 data_to_log))
 
     def _common_log(self, variables, possessions, functions, lengths):
         ret = OrderedDict()
@@ -145,12 +130,12 @@ class Logger:
                                              possessions,
                                              functions,
                                              lengths)
-            self.database_connection.put(["log",
+            self.database_connection.put(("panel_log",
+                                          self._str_round,
                                           self.group,
                                           self._str_name,
-                                          self._str_round,
-                                          data_to_write,
-                                          serial])
+                                          serial,
+                                          data_to_write))
 
     def custom_log(self, method, *args, **kwargs):
         """ send custom logging commands to database plugin, see :ref:`Database Plugins` """

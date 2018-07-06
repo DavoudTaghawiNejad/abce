@@ -18,12 +18,11 @@ class Agent(abcEconomics.Agent):
         self.r = self.time[0] + 10 * self.time[1]
         self.log('li', self.i)
         self.log('lr', self.r)
-        self.log('l', {'i': self.i, 'r': self.r})
 
 
 def compare(to_compare, path, message, processes):
 
-    the_path = (path + '/' + to_compare)
+    the_path = (path + '/' + 'data.csv')
     if platform.system() == 'Windows':  # windows compatibility
         the_path = the_path[the_path.find('/') + 1:]
 
@@ -69,14 +68,8 @@ def main(processes, rounds):
             agents.panel_log(variables=['i', 'r'], goods=['money'])
     simulation.finalize()
 
-    compare('aggregated_friendly_agent.csv',
-            simulation.path, 'aggregated logging test\t\t',
-            processes)
-    compare('aggregate_friendly_agent.csv',
-            simulation.path, 'aggregate logging test\t\t',
-            processes)
-    compare('panel_friendly_agent.csv',
-            simulation.path, 'aggregate logging test mean\t',
+    compare('friendly_data.csv',
+            simulation.path, 'named logging test\t\t',
             processes)
 
 

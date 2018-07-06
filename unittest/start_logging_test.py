@@ -15,7 +15,7 @@ class Agent(abcEconomics.Agent):
         self.r = self.time
         self.log('li', self.i)
         self.log('lr', self.r)
-        self.log('l', {'i': self.i, 'r': self.r})
+
 
 
 def compare(to_compare, path, message, processes):
@@ -62,15 +62,10 @@ def main(processes, rounds):
         agents.panel_log(variables=['i', 'r'], goods=['money'])
     simulation.finalize()
 
-    compare('aggregated_agent.csv',
-            simulation.path, 'aggregated logging test\t\t',
+    compare('data.csv',
+            simulation.path, 'logging test\t\t',
             processes)
-    compare('aggregate_agent.csv',
-            simulation.path, 'aggregate logging test\t\t',
-            processes)
-    compare('panel_agent.csv',
-            simulation.path, 'aggregate logging test mean\t',
-            processes)
+
 
 
 if __name__ == '__main__':

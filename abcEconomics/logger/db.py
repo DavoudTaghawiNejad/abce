@@ -14,26 +14,24 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations
 # under the License.
+from sys import getsizeof
 import datetime
 import json
 import os
-import threading
 import multiprocessing
 import time
 from collections import defaultdict
-
-import dataset
-
 from .online_variance import OnlineVariance
 from .postprocess import to_csv
 import queue
+import pandas as pd
 
 
-class DbDatabase:
+class Database:
     """Separate thread that receives data from in_sok and saves it into a
     database"""
 
-    def __init__(self, directory, name, in_sok, trade_log, plugin=None, pluginargs=[]):
+    def __init__(self, directory, name, trade_log, plugin=None, pluginargs=[]):
         super().__init__()
 
         # setting up directory
@@ -56,10 +54,6 @@ class DbDatabase:
                 except OSError:
                     self.directory += 'I'
 
-        self.panels = {}
-        self.in_sok = in_sok
-        self.data = {}
-        self.trade_log = trade_log
 
         self.aggregation = defaultdict(lambda: defaultdict(OnlineVariance))
         self.round = 0
@@ -68,43 +62,11 @@ class DbDatabase:
         self.pluginargs = pluginargs
 
 
-        self.table_log = {}
-        self.current_log = defaultdict(list)
-        self.current_trade = []
-        self.table_aggregates = {}
+        self.panel_data = []
+        self.write_panel_data_header = True
 
-        if self.trade_log:
-            trade_table = self.dataset_db.create_table('trade___trade',
-                                                       primary_id='index')
-
-    def run(self):
         if self.plugin is not None:
             self.plugin = self.plugin(*self.pluginargs)
-        self.dataset_db = dataset.connect('sqlite://')
-        self.dataset_db.query('PRAGMA synchronous=OFF')
-        # self.dataset_db.query('PRAGMA journal_mode=OFF')
-        self.dataset_db.query('PRAGMA count_changes=OFF')
-        self.dataset_db.query('PRAGMA temp_store=OFF')
-        self.dataset_db.query('PRAGMA default_temp_store=OFF')
-        self.table_log = {}
-        self.current_log = defaultdict(list)
-        self.current_trade = []
-        self.table_aggregates = {}
-
-        if self.trade_log:
-            trade_table = self.dataset_db.create_table('trade___trade',
-                                                       primary_id='index')
-
-        while True:
-            try:
-                msg = self.in_sok.get(timeout=120)
-            except queue.Empty:
-                print("simulation.finalize() must be specified at the end of simulation")
-                msg = self.in_sok.get()
-            if msg == "close":
-                self.close()
-                break
-            self.put(msg)
 
     def put(self, msg):
         if msg[0] == 'snapshot_agg':
@@ -118,30 +80,21 @@ class DbDatabase:
                 for key, value in data_to_write.items():
                     self.aggregation[group][key].update(value)
 
-        elif msg[0] == 'trade_log':
-            for (good, seller, buyer, price), quantity in msg[1].items():
-                self.current_trade.append({'round': msg[2],
-                                      'good': good,
-                                      'seller': seller,
-                                      'buyer': buyer,
-                                      'price': price,
-                                      'quantity': quantity})
-                if len(self.current_trade) == 1000:
-                    trade_table.insert_many(self.current_trade)
-                    self.current_trade = []
-
         elif msg[0] == 'log':
-            _, group, name, round, data_to_write, subround_or_serial = msg
-            table_name = 'panel___%s___%s' % (group, subround_or_serial)
-            data_to_write['round'] = str(round)
-            data_to_write['name'] = str(name)
-            self.current_log[table_name].append(data_to_write)
-            if len(self.current_log[table_name]) == 1000:
-                if table_name not in self.table_log:
-                    self.table_log[table_name] = self.dataset_db.create_table(
-                        table_name, primary_id='index')
-                self.table_log[table_name].insert_many(self.current_log[table_name])
-                self.current_log[table_name] = []
+            self.log(msg[1:])
+
+        elif msg[0] == 'panel_log':
+            (_,
+              _str_round,
+              group,
+              _str_name,
+              serial,
+              data_to_write) = msg
+            for action, data in data_to_write.items():
+                self.log((_str_round, group, _str_name, '%s_%s' % (action, serial), data))
+
+        elif msg[0] == 'trade_log':
+            print("trade_log non implemented")
 
         else:
             try:
@@ -150,26 +103,35 @@ class DbDatabase:
                 raise AttributeError(
                     "abcEconomics_db error '%s' command unknown" % msg)
 
+    def log(self, msg):
+        self.panel_data.append(msg)
+        if len(self.panel_data) % 100000:
+            if getsizeof(self.panel_data) > 1000000000:
+                self.dump()
+
+    def dump(self):
+        if self.panel_data:
+            df = pd.DataFrame(self.panel_data)
+            df.rename(columns={0: 'round', 1: 'group', 2: 'name', 3: 'var', 4: 'value'}, inplace=True)
+
+            df.pivot_table(values='value', index=['round', 'group', 'name'],
+                                             columns=['var']).to_csv(self.directory + '/data.csv',
+                                             mode='a', header=self.write_panel_data_header)
+            self.write_panel_data_header = False
+            self.panel_data = []
+
     def finalize(self, data):
         self.close()
         self._write_description_file(data)
 
     def close(self):
-        for name, data in self.current_log.items():
-            if name not in self.dataset_db:
-                self.table_log[name] = self.dataset_db.create_table(
-                    name, primary_id='index')
-            self.table_log[name].insert_many(data)
         self.make_aggregation_and_write()
-        if self.trade_log:
-            trade_table.insert_many(self.current_trade)
-        self.dataset_db.commit()
+        self.dump()
+
         try:
             self.plugin.close()
         except AttributeError:
             pass
-        if self.directory is not None:
-            to_csv(self.directory, self.dataset_db)
 
     def make_aggregation_and_write(self):
         for group, table in self.aggregation.items():
@@ -178,15 +140,10 @@ class DbDatabase:
                 result[key + '_ttl'] = data.sum()
                 result[key + '_mean'] = data.mean()
                 result[key + '_std'] = data.std()
-            try:
-                self.table_aggregates[group].insert(result)
-            except KeyError:
-                self.table_aggregates[group] = self.dataset_db.create_table(
-                    'aggregate___%s' % group, primary_id='index')
-                self.table_aggregates[group].insert(result)
+                self.log((self.round, group, None, '%s_%s' % (key, '_ttl'), data.sum()))
+                self.log((self.round, group, None, '%s_%s' % (key, '_mean'), data.sum()))
+                self.log((self.round, group, None, '%s_%s' % (key, '_sum'), data.std()))
             self.aggregation[group].clear()
-
-
 
     def _write_description_file(self, data):
         if self.directory is not None:
@@ -198,9 +155,27 @@ class DbDatabase:
                     default=lambda x: 'not_serializeable'))
 
 
-class MultiprocessingDatabase(DbDatabase, multiprocessing.Process):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+class MultiprocessingDatabase(Database, multiprocessing.Process):
+    def __init__(self, directory, name, in_sok, trade_log, plugin=None, pluginargs=[]):
+        super().__init__(directory, name, trade_log, plugin, pluginargs)
+        self.in_sok = in_sok
+
+    def run(self):
+        if self.plugin is not None:
+            self.plugin = self.plugin(*self.pluginargs)
+        self.panel_data = []
+        self.write_panel_data_header = True
+
+        while True:
+            try:
+                msg = self.in_sok.get(timeout=120)
+            except queue.Empty:
+                print("simulation.finalize() must be specified at the end of simulation")
+                msg = self.in_sok.get()
+            if msg == "close":
+                self.close()
+                break
+            self.put(msg)
 
     def finalize(self, data):
         self.in_sok.put('close')
