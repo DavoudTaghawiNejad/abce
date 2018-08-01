@@ -10,7 +10,7 @@ def dateparse(x):
 
 
 def gen(path, datetime=False):
-    app = dash.Dash()
+
 
     infile = path + '/data.csv'
     df = pd.read_csv(infile)
@@ -51,13 +51,15 @@ def gen(path, datetime=False):
 
 
 
-    app.layout = html.Div(children=[
+    layout = html.Div(children=[
         html.H1(children='abcEconomics')] +
         [dcc.Tabs(id='graphs', children=[dcc.Tab(label=group, children=graphs[group]) for group in groups])])
 
-    return app
+    return layout
 
 
 def ppl(path):
-    app = gen(path)
+    app = dash.Dash()
+
+    app.layout = gen(path)
     app.run_server(debug=True, use_reloader=False)
