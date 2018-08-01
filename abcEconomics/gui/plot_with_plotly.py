@@ -16,27 +16,31 @@ def gen(path):
     df = pd.read_csv(infile, parse_dates={'datetime': ['round']}, date_parser=dateparse)
     df = df.set_index(df['datetime'])
 
-    farms = df[df['group'] == 'farm']
+    groups = set(df['group'])
 
-    data = {}
-    for col in farms.columns:
-        if col not in ['round', 'name', 'datetime', 'group']:
-            try:
-                data[col] = farms.pivot_table(columns='name', values=col, index='datetime')
-            except Exception as e:
-                print(col, e)
+    graphs = {}
+
+    for group in groups:
+        graphs[group] = []
+
+        group_df = df[df['group'] == group]
+
+        for col in group_df.columns:
+            if col not in ['round', 'name', 'datetime', 'group']:
+                table = group_df.pivot_table(columns='name', values=col, index='datetime')
+
+                if len(table) > 0:
+                    graphs[group].append(html.H3(children=group + ' - ' + col))
+                    graphs[group].append(dcc.Graph(id=group + '_' + col,
+                                         figure=table.figure(kind='scatter', asFigure=True)))
 
     app.layout = html.Div(children=[
         html.H1(children='Hello Dash'),
 
         html.Div(children='''
             Dash: A web application framework for Python.
-        '''),
-
-        dcc.Graph(
-            id='example-graph',
-            figure=data['money'].figure(kind='scatter', theme='ggplot', asFigure=True))
-    ])
+        ''')] +
+        [dcc.Tabs(id='graphs', children=[dcc.Tab(label=group, children=graphs[group]) for group in groups])])
 
     return app
 
