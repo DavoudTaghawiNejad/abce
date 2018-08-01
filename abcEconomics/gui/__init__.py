@@ -7,7 +7,7 @@ from flexx import app
 from .webtext import abcEconomicsdescription
 from .basiclayout import basiclayout
 from .form import form
-
+from .plot_with_plotly import ppl
 
 def gui(parameter_mask, names=None, header=None, story=None,
         title="Agent-Based Computational Economics",
@@ -156,7 +156,7 @@ def gui(parameter_mask, names=None, header=None, story=None,
     return inner
 
 
-def graph(parameter_mask=None, names=None):
+def graph(path, parameter_mask=None, names=None):
     """ After the simulation simulation.graphs displays all logged data,
     this can not be use in conjuncture with @gui.
 
@@ -170,12 +170,4 @@ def graph(parameter_mask=None, names=None):
     """
     names = ({} if names is None else names)
 
-    database = dataset.connect('sqlite:///parameter.db')
-    abcEconomics.parameter_database = database['parameter']
-    parameter_mask = ({} if parameter_mask is None else parameter_mask)
-
-    Form = form(parameter_mask, names)
-
-    app.launch(basiclayout(Form, None, parameter_mask['name'],
-               graphs=True), runtime='browser-X')
-    app.run()
+    ppl(path)

@@ -211,7 +211,7 @@ class Simulation(object):
     def advance_round(self, time):
         self._time = time
         print("\rRound" + str(time))
-        str_time = re.sub('[^0-9a-zA-Z_]', '', str(time))
+        str_time = re.sub('[^0-9a-zA-Z_\-]', '', str(time))
         self.scheduler.advance_round(time, str_time)
 
     def finalize(self):
@@ -351,4 +351,4 @@ class Simulation(object):
             simulation.graphs()
         """
         self.finalize()
-        graph(self.sim_parameters)
+        graph(self.path, self.sim_parameters)
